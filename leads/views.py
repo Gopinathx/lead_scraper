@@ -60,7 +60,7 @@ async def stream_logs(request):
         try:
             await async_stream_gmaps_scraper(async_queue, query, max_results)
         except Exception as e:
-            await async_queue.put(f"data: ❌ Error: {str(e)}\n\n")
+            await async_queue.put(f"data: ❌ Worker Error: {str(e)}\n\n")
         finally:
             await async_queue.put("data: COMPLETE\n\n")
             await async_queue.put(None)
@@ -70,13 +70,12 @@ async def stream_logs(request):
     async def event_stream():
         while True:
             try:
-                # Wait up to 10 seconds for a new log item
-                item = await asyncio.wait_for(async_queue.get(), timeout=10.0)
+                item = await asyncio.wait_for(async_queue.get(), timeout=5.0)
                 if item is None:
                     break
                 yield item
             except asyncio.TimeoutError:
-                # Send SSE comment heartbeat to keep proxy connection active
+                # Keep connection alive during long Playwright page loads
                 yield ": ping\n\n"
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")

@@ -77,12 +77,12 @@ async def extract_emails_async(url: str) -> str:
 
 # --- Async Helpers for Django ORM ---
 
-@sync_to_async
+@sync_to_async(thread_sensitive=False)
 def clear_old_leads():
     close_old_connections()
     Lead.objects.all().delete()
 
-@sync_to_async
+@sync_to_async(thread_sensitive=False)
 def save_lead_to_db(name, phone, website, emails, address):
     close_old_connections()
     return Lead.objects.create(
@@ -220,6 +220,8 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
                 
                 count += 1
                 await q_out.put(f"data: ✅ Saved ({count}/{len(target_links)}): {lead.name}\n\n")
+
+                await asyncio.sleep(0.05)
 
             except Exception as err:
                 await q_out.put(f"data: ⚠️ Error processing entry: {str(err)}\n\n")
