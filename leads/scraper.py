@@ -4,59 +4,35 @@ from urllib.parse import urljoin, urlparse
 from playwright.async_api import async_playwright
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
-from .models import Lead, ScraperJob, ScraperLog
+from .models import Lead
 import httpx
-
-
-# --- Database Logging Helpers ---
-
-@sync_to_async(thread_sensitive=False)
-def add_log(job_id: str, message: str):
-    """Writes a log entry to PostgreSQL for frontend polling."""
-    close_old_connections()
-    ScraperLog.objects.create(job_id=job_id, message=message)
-
-@sync_to_async(thread_sensitive=False)
-def update_job_status(job_id: str, status: str):
-    """Updates status to COMPLETED or FAILED."""
-    close_old_connections()
-    ScraperJob.objects.filter(id=job_id).update(status=status)
-
-@sync_to_async(thread_sensitive=False)
-def clear_old_leads():
-    close_old_connections()
-    Lead.objects.all().delete()
-
-@sync_to_async(thread_sensitive=False)
-def save_lead_to_db(name, phone, website, emails, address):
-    close_old_connections()
-    return Lead.objects.create(
-        name=name,
-        phone=phone,
-        website=website,
-        emails=emails,
-        address=address
-    )
 
 
 # --- Phone Normalizer Utility ---
 
 def normalize_phone_number(phone_str: str, default_country_code: str = "91") -> str:
+    """
+    Cleans raw scraper strings into standard E.164 format (+919876543210).
+    """
     if not phone_str or phone_str == "N/A":
         return "N/A"
 
+    # Remove non-digit characters except leading +
     cleaned = re.sub(r"[^\d+]", "", phone_str)
 
     if cleaned.startswith("+"):
         cleaned = cleaned[1:]
     cleaned = cleaned.lstrip("0")
 
+    # Handle standard 10-digit local mobile numbers
     if len(cleaned) == 10:
         return f"+{default_country_code}{cleaned}"
 
+    # Handle 12-digit numbers starting with country code
     if len(cleaned) == 12 and cleaned.startswith(default_country_code):
         return f"+{cleaned}"
 
+    # Return cleaned string with + if valid digits, otherwise N/A
     return f"+{cleaned}" if len(cleaned) >= 10 else "N/A"
 
 
@@ -70,6 +46,7 @@ async def extract_emails_async(url: str) -> str:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     found_emails = set()
+    # Query root and primary contact endpoint for fast resolution
     subpaths = ["", "/contact"]
 
     try:
@@ -78,6 +55,7 @@ async def extract_emails_async(url: str) -> str:
     except Exception:
         return "N/A"
 
+    # Fast 1.5s timeout per request to avoid blocking the SSE stream
     async with httpx.AsyncClient(headers=headers, timeout=1.5, follow_redirects=True, verify=False) as client:
         for path in subpaths:
             try:
@@ -98,162 +76,180 @@ async def extract_emails_async(url: str) -> str:
     return ", ".join(sorted(list(found_emails))[:3]) if found_emails else "N/A"
 
 
-# --- Main Async Scraper (Polled Architecture) ---
+# --- Async Helpers for Django ORM ---
 
-async def run_polled_gmaps_scraper(job_id: str, search_query: str, max_results: int = 5):
-    """
-    Executes background scraping task and writes all progress 
-    updates to ScraperLog table instead of SSE queues.
-    """
+@sync_to_async(thread_sensitive=False)
+def clear_old_leads():
+    close_old_connections()
+    Lead.objects.all().delete()
+
+@sync_to_async(thread_sensitive=False)
+def save_lead_to_db(name, phone, website, emails, address):
+    close_old_connections()
+    return Lead.objects.create(
+        name=name,
+        phone=phone,
+        website=website,
+        emails=emails,
+        address=address
+    )
+
+
+# --- Main Async Scraper ---
+
+async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
     max_results = int(max_results)
 
-    try:
-        await add_log(job_id, "🧹 Clearing previous session data...")
-        await clear_old_leads()
+    await q_out.put("data: 🧹 Clearing previous session data...\n\n")
+    await clear_old_leads()
 
-        await add_log(job_id, f"🚀 Launching browser scraper for '{search_query}'...")
+    await q_out.put("data: 🚀 Launching browser scraper...\n\n")
 
-        async def route_interceptor(route):
-            if route.request.resource_type in ["image", "media", "font"]:
-                await route.abort()
-            else:
-                await route.continue_()
+    async def route_interceptor(route):
+        # Block heavy media and font files to conserve RAM on Render
+        if route.request.resource_type in ["image", "media", "font"]:
+            await route.abort()
+        else:
+            await route.continue_()
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-software-rasterizer"
-                ]
-            )
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                locale="en-US"
-            )
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer"
+            ]
+        )
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            locale="en-US"
+        )
 
-            await context.route("**/*", route_interceptor)
-            page = await context.new_page()
+        # Intercept route to filter media assets
+        await context.route("**/*", route_interceptor)
 
-            target_url = f"https://www.google.com/maps/search/{search_query.replace(' ', '+')}"
+        page = await context.new_page()
+
+        target_url = f"https://www.google.com/maps/search/{search_query.replace(' ', '+')}"
+        
+        try:
+            await page.goto(target_url, timeout=20000, wait_until="domcontentloaded")
+        except Exception as e:
+            await q_out.put(f"data: ⚠️ Page load warning: {str(e)}\n\n")
+
+        await asyncio.sleep(1.5)
+
+        feed_selector = 'div[role="feed"]'
+        try:
+            await page.wait_for_selector(feed_selector, timeout=8000)
+        except Exception:
+            pass
+
+        collected = set()
+        scroll_attempts = 0
+        max_scroll_attempts = max_results * 4
+
+        while len(collected) < max_results and scroll_attempts < max_scroll_attempts:
+            scroll_attempts += 1
             
-            try:
-                await page.goto(target_url, timeout=20000, wait_until="domcontentloaded")
-            except Exception as e:
-                await add_log(job_id, f"⚠️ Page load warning: {str(e)}")
+            elements = await page.query_selector_all('a[href*="/maps/place/"]')
+            for el in elements:
+                href = await el.get_attribute('href')
+                if href and '/maps/place/' in href:
+                    collected.add(href)
+                if len(collected) >= max_results:
+                    break
 
-            await asyncio.sleep(1.5)
+            feed = await page.query_selector(feed_selector)
+            if feed:
+                await feed.evaluate('el => el.scrollBy(0, 1000)')
+            else:
+                await page.mouse.wheel(0, 1000)
 
-            feed_selector = 'div[role="feed"]'
-            try:
-                await page.wait_for_selector(feed_selector, timeout=8000)
-            except Exception:
-                pass
+            await asyncio.sleep(1.0)
 
-            collected = set()
-            scroll_attempts = 0
-            max_scroll_attempts = max_results * 4
+        target_links = list(collected)[:max_results]
 
-            while len(collected) < max_results and scroll_attempts < max_scroll_attempts:
-                scroll_attempts += 1
-                
-                elements = await page.query_selector_all('a[href*="/maps/place/"]')
-                for el in elements:
-                    href = await el.get_attribute('href')
-                    if href and '/maps/place/' in href:
-                        collected.add(href)
-                    if len(collected) >= max_results:
-                        break
-
-                feed = await page.query_selector(feed_selector)
-                if feed:
-                    await feed.evaluate('el => el.scrollBy(0, 1000)')
-                else:
-                    await page.mouse.wheel(0, 1000)
-
-                await asyncio.sleep(1.0)
-
-            target_links = list(collected)[:max_results]
-
-            if not target_links:
-                await add_log(job_id, "⚠️ No results found on Google Maps.")
-                await update_job_status(job_id, "COMPLETED")
-                await browser.close()
-                return
-
-            await add_log(job_id, f"🔍 Extracting {len(target_links)} locations...")
-
-            count = 0
-            for href in target_links:
-                raw_phone, website, address, emails = "N/A", "N/A", "N/A", "N/A"
-
-                try:
-                    await page.goto(href, timeout=12000, wait_until="commit")
-                    
-                    try:
-                        await page.wait_for_selector('h1', timeout=3000)
-                    except Exception:
-                        pass
-
-                    title_el = await page.query_selector('h1')
-                    name = (await title_el.inner_text()).strip() if title_el else "Unknown Location"
-
-                    await add_log(job_id, f"📍 Processing ({count + 1}/{len(target_links)}): {name}")
-
-                    # Extract Phone
-                    phone_el = await page.query_selector('button[data-tooltip*="phone"], button[aria-label*="Phone"], button[data-item-id*="phone"]')
-                    if phone_el:
-                        aria_label = await phone_el.get_attribute('aria-label') or ""
-                        raw_phone = aria_label.replace("Phone: ", "").replace("Phone", "").strip()
-                        if not raw_phone:
-                            raw_phone = (await phone_el.inner_text()).strip()
-
-                    normalized_phone = normalize_phone_number(raw_phone, default_country_code="91")
-
-                    # Extract Website
-                    website_el = await page.query_selector('a[data-item-id="authority"], a[data-tooltip*="website"], a[aria-label*="Website"]')
-                    if website_el:
-                        raw_website = await website_el.get_attribute('href')
-                        if raw_website and raw_website.startswith('http'):
-                            website = raw_website
-
-                    # Extract Address
-                    addr_el = await page.query_selector('button[data-item-id="address"], button[data-tooltip*="address"], button[aria-label*="Address"]')
-                    if addr_el:
-                        aria_label = await addr_el.get_attribute('aria-label') or ""
-                        address = aria_label.replace("Address: ", "").replace("Address", "").strip()
-
-                    # Extract Email
-                    if website != "N/A":
-                        await add_log(job_id, f"📧 Checking emails for {name}...")
-                        emails = await extract_emails_async(website)
-
-                    # Save Lead
-                    lead = await save_lead_to_db(
-                        name=name,
-                        phone=normalized_phone,
-                        website=website,
-                        emails=emails,
-                        address=address
-                    )
-
-                    count += 1
-                    await add_log(job_id, f"✅ Saved ({count}/{len(target_links)}): {lead.name}")
-
-                except Exception as err:
-                    await add_log(job_id, f"⚠️ Error processing entry: {str(err)}")
-                    continue
-
+        if not target_links:
+            await q_out.put("data: ⚠️ No results found on Google Maps.\n\n")
             await browser.close()
-            await update_job_status(job_id, "COMPLETED")
-            await add_log(job_id, "🎉 Scraping Complete!")
+            return
 
-    except Exception as e:
-        await update_job_status(job_id, "FAILED")
-        await add_log(job_id, f"❌ Scraper crashed: {str(e)}")
+        await q_out.put(f"data: 🔍 Extracting {len(target_links)} locations...\n\n")
+
+        count = 0
+        for href in target_links:
+            raw_phone, website, address, emails = "N/A", "N/A", "N/A", "N/A"
+
+            try:
+                # Use commit strategy so page navigation proceed immediately
+                await page.goto(href, timeout=12000, wait_until="commit")
+                
+                # Wait for title heading
+                try:
+                    await page.wait_for_selector('h1', timeout=3000)
+                except Exception:
+                    pass
+
+                # Extract Name
+                title_el = await page.query_selector('h1')
+                name = (await title_el.inner_text()).strip() if title_el else "Unknown Location"
+
+                await q_out.put(f"data: 📍 Processing ({count + 1}/{len(target_links)}): {name}\n\n")
+
+                # Extract Phone
+                phone_el = await page.query_selector('button[data-tooltip*="phone"], button[aria-label*="Phone"], button[data-item-id*="phone"]')
+                if phone_el:
+                    aria_label = await phone_el.get_attribute('aria-label') or ""
+                    raw_phone = aria_label.replace("Phone: ", "").replace("Phone", "").strip()
+                    if not raw_phone:
+                        raw_phone = (await phone_el.inner_text()).strip()
+
+                # Normalize Phone Number
+                normalized_phone = normalize_phone_number(raw_phone, default_country_code="91")
+
+                # Extract Website
+                website_el = await page.query_selector('a[data-item-id="authority"], a[data-tooltip*="website"], a[aria-label*="Website"]')
+                if website_el:
+                    raw_website = await website_el.get_attribute('href')
+                    if raw_website and raw_website.startswith('http'):
+                        website = raw_website
+
+                # Extract Address
+                addr_el = await page.query_selector('button[data-item-id="address"], button[data-tooltip*="address"], button[aria-label*="Address"]')
+                if addr_el:
+                    aria_label = await addr_el.get_attribute('aria-label') or ""
+                    address = aria_label.replace("Address: ", "").replace("Address", "").strip()
+
+                # Extract Email with heartbeats before and after async call
+                if website != "N/A":
+                    await q_out.put(f"data: 📧 Checking emails for {name}...\n\n")
+                    emails = await extract_emails_async(website)
+
+                # Save Lead to DB
+                lead = await save_lead_to_db(
+                    name=name,
+                    phone=normalized_phone,
+                    website=website,
+                    emails=emails,
+                    address=address
+                )
+
+                count += 1
+                await q_out.put(f"data: ✅ Saved ({count}/{len(target_links)}): {lead.name}\n\n")
+                
+                # Yield execution frame to flush SSE stream buffer
+                await asyncio.sleep(0.05)
+
+            except Exception as err:
+                await q_out.put(f"data: ⚠️ Error processing entry: {str(err)}\n\n")
+                continue
+
+        await browser.close()
+        await q_out.put("data: 🎉 Scraping Complete!\n\n")
 # import re
 # import asyncio
 # import requests
