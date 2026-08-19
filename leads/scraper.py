@@ -97,15 +97,20 @@ def save_lead_to_db(name, phone, website, emails, address):
 async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
     max_results = int(max_results)
 
-    q_out.put("data: 🧹 Clearing previous session data...\n\n")
+    await q_out.put("data: 🧹 Clearing previous session data...\n\n")
     await clear_old_leads()
 
-    q_out.put("data: 🚀 Launching browser scraper...\n\n")
+    await q_out.put("data: 🚀 Launching browser scraper...\n\n")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless=False,
-            args=["--no-sandbox", "--disable-setuid-sandbox"]
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu"
+            ]
         )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -118,7 +123,7 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
         try:
             await page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
         except Exception as e:
-            q_out.put(f"data: ⚠️ Page load warning: {str(e)}\n\n")
+            await q_out.put(f"data: ⚠️ Page load warning: {str(e)}\n\n")
 
         await asyncio.sleep(3)
 
@@ -154,11 +159,11 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
         target_links = list(collected)[:max_results]
 
         if not target_links:
-            q_out.put("data: ⚠️ No results found on Google Maps.\n\n")
+            await q_out.put("data: ⚠️ No results found on Google Maps.\n\n")
             await browser.close()
             return
 
-        q_out.put(f"data: 🔍 Extracting {len(target_links)} locations...\n\n")
+        await q_out.put(f"data: 🔍 Extracting {len(target_links)} locations...\n\n")
 
         count = 0
         for href in target_links:
@@ -172,7 +177,7 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
                 title_el = await page.query_selector('h1')
                 name = (await title_el.inner_text()).strip() if title_el else "Unknown Location"
 
-                q_out.put(f"data: 📍 Processing ({count + 1}/{len(target_links)}): {name}\n\n")
+                await q_out.put(f"data: 📍 Processing ({count + 1}/{len(target_links)}): {name}\n\n")
 
                 # Phone extraction
                 phone_el = await page.query_selector('button[data-tooltip*="phone"], button[aria-label*="Phone"], button[data-item-id*="phone"]')
@@ -212,14 +217,14 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
                 )
                 
                 count += 1
-                q_out.put(f"data: ✅ Saved ({count}/{len(target_links)}): {lead.name}\n\n")
+                await q_out.put(f"data: ✅ Saved ({count}/{len(target_links)}): {lead.name}\n\n")
 
             except Exception as err:
-                q_out.put(f"data: ⚠️ Error processing entry: {str(err)}\n\n")
+                await q_out.put(f"data: ⚠️ Error processing entry: {str(err)}\n\n")
                 continue
 
         await browser.close()
-        q_out.put("data: 🎉 Scraping Complete!\n\n")
+        await q_out.put("data: 🎉 Scraping Complete!\n\n")
 
 
 # import re
