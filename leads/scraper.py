@@ -6,6 +6,7 @@ from playwright.async_api import async_playwright
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from .models import Lead
+import httpx
 
 
 # --- Phone Normalizer Utility ---
