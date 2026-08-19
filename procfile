@@ -1,1 +1,1 @@
-web: gunicorn your_django_project.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+web: gunicorn lead_project.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 300 --keep-alive 75

@@ -252,13 +252,13 @@
             logConsole.innerHTML = '<p class="text-pink-300/40">Console cleared.</p>';
         });
 
-        form.addEventListener('submit', function(e) {
+        form.addEventListener('submit', async function(e) {
             e.preventDefault();
 
             const query = document.getElementById('query').value;
             const maxResults = document.getElementById('max_results').value;
 
-            // UI State updates
+            // Reset UI State to Active
             startBtn.disabled = true;
             startBtn.classList.add('opacity-50', 'cursor-not-allowed');
             statusBadge.innerText = "Scraping Active";
@@ -266,44 +266,68 @@
             pulseDot.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75";
             solidDot.className = "relative inline-flex rounded-full h-2.5 w-2.5 bg-pink-500";
 
-            logConsole.innerHTML = '<p class="text-pink-400">Initializing SSE stream pipeline...</p>';
+            logConsole.innerHTML = '<p class="text-pink-400">Initializing extraction task...</p>';
 
-            const eventSource = new EventSource(`/stream/?query=${encodeURIComponent(query)}&max_results=${maxResults}`);
+            try {
+                // Step 1: Request backend to start background job
+                const startRes = await fetch(`/api/start-scraper/?query=${encodeURIComponent(query)}&max_results=${maxResults}`);
+                if (!startRes.ok) throw new Error("Failed to initialize job.");
+                
+                const { job_id } = await startRes.json();
+                
+                let lastLogId = 0;
 
-            eventSource.onmessage = function(event) {
-                if (event.data === "COMPLETE") {
-                    eventSource.close();
-                    
-                    // Reset State
-                    startBtn.disabled = false;
-                    startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                    statusBadge.innerText = "Completed";
-                    statusBadge.className = "text-fuchsia-300 font-medium";
-                    pulseDot.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-400 opacity-75";
-                    solidDot.className = "relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-500";
+                // Step 2: Poll database logs every 1.5 seconds
+                pollInterval = setInterval(async () => {
+                    try {
+                        const pollRes = await fetch(`/api/poll-logs/${job_id}/?last_id=${lastLogId}`);
+                        if (!pollRes.ok) return;
 
-                    const doneMsg = document.createElement('p');
-                    doneMsg.className = "text-pink-300 font-bold mt-2";
-                    doneMsg.innerText = "✨ Scraping session finished! Reloading page data...";
-                    logConsole.appendChild(doneMsg);
-                    logConsole.scrollTop = logConsole.scrollHeight;
+                        const data = await pollRes.json();
 
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1500);
+                        // Append new logs to console
+                        if (data.logs && data.logs.length > 0) {
+                            data.logs.forEach(log => {
+                                const p = document.createElement('p');
+                                p.className = "text-pink-100/90";
+                                p.innerText = log.message;
+                                logConsole.appendChild(p);
+                            });
+                            lastLogId = data.latest_id;
+                            logConsole.scrollTop = logConsole.scrollHeight;
+                        }
 
-                    return;
-                }
+                        // Step 3: Handle completion or failure
+                        if (data.status === "COMPLETED" || data.status === "FAILED") {
+                            clearInterval(pollInterval);
 
-                const p = document.createElement('p');
-                p.className = "text-pink-100/90";
-                p.innerText = event.data;
-                logConsole.appendChild(p);
-                logConsole.scrollTop = logConsole.scrollHeight;
-            };
+                            startBtn.disabled = false;
+                            startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
 
-            eventSource.onerror = function() {
-                eventSource.close();
+                            if (data.status === "COMPLETED") {
+                                statusBadge.innerText = "Completed";
+                                statusBadge.className = "text-fuchsia-300 font-medium";
+                                pulseDot.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-400 opacity-75";
+                                solidDot.className = "relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-500";
+
+                                const doneMsg = document.createElement('p');
+                                doneMsg.className = "text-pink-300 font-bold mt-2";
+                                doneMsg.innerText = "✨ Scraping session finished! Reloading page data...";
+                                logConsole.appendChild(doneMsg);
+                                logConsole.scrollTop = logConsole.scrollHeight;
+
+                                setTimeout(() => { window.location.reload(); }, 1500);
+                            } else {
+                                statusBadge.innerText = "Failed";
+                                statusBadge.className = "text-rose-400 font-medium";
+                            }
+                        }
+                    } catch (pollErr) {
+                        console.error("Polling error:", pollErr);
+                    }
+                }, 1500);
+
+            } catch (err) {
                 startBtn.disabled = false;
                 startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
                 statusBadge.innerText = "Error Occurred";
@@ -311,9 +335,9 @@
 
                 const errorMsg = document.createElement('p');
                 errorMsg.className = "text-rose-400 font-semibold";
-                errorMsg.innerText = "⚠️ Connection error occurred during log streaming.";
+                errorMsg.innerText = `⚠️ ${err.message || "Failed to start scraping pipeline."}`;
                 logConsole.appendChild(errorMsg);
-            };
+            }
         });
 
         // 2. Client-side Search & Pagination Logic

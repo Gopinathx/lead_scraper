@@ -1,6 +1,6 @@
 import asyncio
 from django.shortcuts import render
-from django.http import HttpResponse, StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.db import close_old_connections
 from openpyxl import Workbook
 from reportlab.lib.pagesizes import letter
@@ -8,8 +8,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-from .models import Lead
-from .scraper import async_stream_gmaps_scraper
+from .models import Lead, ScraperJob, ScraperLog
+from .scraper import run_polled_gmaps_scraper
 
 
 def dashboard(request):
@@ -18,74 +18,61 @@ def dashboard(request):
     return render(request, "leads/dashboard.html", {"leads": leads})
 
 
-# async def stream_logs(request):
-#     query = request.GET.get("query", "")
-#     max_results = int(request.GET.get("max_results", 5))
+# --- Polling API Endpoints ---
 
-#     async_queue = asyncio.Queue()
-
-#     # Worker task executing the scraper
-#     async def worker():
-#         try:
-#             await async_stream_gmaps_scraper(async_queue, query, max_results)
-#         except Exception as e:
-#             await async_queue.put(f"data: ❌ Error: {str(e)}\n\n")
-#         finally:
-#             await async_queue.put("data: COMPLETE\n\n")
-#             await async_queue.put(None)
-
-#     # Fire off worker in the active ASGI event loop
-#     asyncio.create_task(worker())
-
-#     # Native async generator for StreamingHttpResponse
-#     async def event_stream():
-#         while True:
-#             item = await async_queue.get()
-#             if item is None:
-#                 break
-#             yield item
-
-#     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
-#     response['Cache-Control'] = 'no-cache'
-#     response['X-Accel-Buffering'] = 'no'
-#     return response
-
-async def stream_logs(request):
+def start_scraper(request):
+    """
+    Creates a new ScraperJob in PostgreSQL and launches the Playwright
+    scraper in the background without blocking the HTTP response.
+    """
+    close_old_connections()
     query = request.GET.get("query", "")
     max_results = int(request.GET.get("max_results", 10))
 
-    async_queue = asyncio.Queue()
+    if not query:
+        return JsonResponse({"error": "Search query is required"}, status=400)
 
-    # Background worker running the scraper
-    async def worker():
-        try:
-            await async_stream_gmaps_scraper(async_queue, query, max_results)
-        except Exception as e:
-            await async_queue.put(f"data: ❌ Worker Error: {str(e)}\n\n")
-        finally:
-            await async_queue.put("data: COMPLETE\n\n")
-            await async_queue.put(None)
+    # 1. Create a tracking job entry
+    job = ScraperJob.objects.create(status="RUNNING")
 
-    asyncio.create_task(worker())
+    # 2. Fire the background scraper task on the running ASGI loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-    # Stream generator with active heartbeat
-    async def event_stream():
-        while True:
-            try:
-                # Wait maximum 3 seconds for scraper logs
-                item = await asyncio.wait_for(async_queue.get(), timeout=3.0)
-                if item is None:
-                    break
-                yield item
-            except asyncio.TimeoutError:
-                # Keeps Render proxy alive during heavy Playwright execution
-                yield ": ping\n\n"
+    loop.create_task(run_polled_gmaps_scraper(str(job.id), query, max_results))
 
-    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
-    response['Cache-Control'] = 'no-cache'
-    response['X-Accel-Buffering'] = 'no'
-    return response
+    return JsonResponse({"job_id": str(job.id)})
 
+
+def poll_logs(request, job_id):
+    """
+    Returns new logs created after `last_id` for the specified `job_id`.
+    """
+    close_old_connections()
+    last_log_id = int(request.GET.get("last_id", 0))
+
+    try:
+        job = ScraperJob.objects.get(id=job_id)
+    except ScraperJob.DoesNotExist:
+        return JsonResponse({"error": "Job not found"}, status=404)
+
+    # Query only logs generated since the last check
+    new_logs = ScraperLog.objects.filter(job_id=job_id, id__gt=last_log_id).order_by("id")
+
+    log_data = [{"id": log.id, "message": log.message} for log in new_logs]
+    latest_id = log_data[-1]["id"] if log_data else last_log_id
+
+    return JsonResponse({
+        "status": job.status,
+        "logs": log_data,
+        "latest_id": latest_id
+    })
+
+
+# --- Export Views ---
 
 def export_excel(request):
     close_old_connections()
