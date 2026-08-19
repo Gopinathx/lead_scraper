@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Lead Intelligence Studio</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .glass-panel {
+            background: rgba(24, 15, 30, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(244, 114, 182, 0.15);
+        }
+        .glow-effect {
+            box-shadow: 0 0 25px -5px rgba(244, 114, 182, 0.35);
+        }
+    </style>
+</head>
+<body class="h-full text-pink-100 antialiased selection:bg-pink-500 selection:text-white bg-gradient-to-br from-slate-950 via-purple-950/40 to-slate-950">
+
+    <div class="min-h-full flex flex-col">
+        <!-- Top Navigation -->
+        <header class="border-b border-pink-500/10 bg-slate-900/60 sticky top-0 z-50 backdrop-blur-md">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 bg-gradient-to-tr from-pink-500 via-rose-400 to-fuchsia-500 rounded-xl text-white shadow-lg shadow-pink-500/20">
+                        <i data-lucide="sparkles" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-bold text-lg text-white tracking-tight">
+                            LeadExtractor <span class="text-xs px-2 py-0.5 rounded-full bg-pink-500/10 text-pink-300 border border-pink-500/20 font-medium ml-1">AI Engine</span>
+                        </h1>
+                    </div>
+                </div>
+                
+                <div class="flex items-center space-x-3">
+                    <a href="{% url 'export_excel' %}" class="inline-flex items-center space-x-2 px-3.5 py-2 text-sm font-medium text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-xl transition-all duration-200">
+                        <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                        <span>Export Excel</span>
+                    </a>
+                    <a href="{% url 'export_pdf' %}" class="inline-flex items-center space-x-2 px-3.5 py-2 text-sm font-medium text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-xl transition-all duration-200">
+                        <i data-lucide="file-text" class="w-4 h-4"></i>
+                        <span>Export PDF</span>
+                    </a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Body -->
+        <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+            
+            <!-- Control Panel & Live Stream Section -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                <!-- Search Controls Card -->
+                <div class="lg:col-span-5 glass-panel rounded-3xl p-6 shadow-2xl relative overflow-hidden flex flex-col justify-between">
+                    <div class="absolute -top-24 -left-24 w-48 h-48 bg-pink-600/20 rounded-full blur-3xl pointer-events-none"></div>
+                    
+                    <div>
+                        <div class="flex items-center justify-between mb-6">
+                            <h2 class="text-base font-semibold text-white flex items-center space-x-2">
+                                <i data-lucide="search" class="w-4 h-4 text-pink-400"></i>
+                                <span>Scraper Configuration</span>
+                            </h2>
+                            <span class="text-xs text-pink-300/60">Google Maps Live Sync</span>
+                        </div>
+
+                        <form id="scrapeForm" class="space-y-5">
+                            <div>
+                                <label class="block text-xs font-medium text-pink-200/80 mb-2">Target Search Query</label>
+                                <div class="relative">
+                                    <input type="text" id="query" name="query" required placeholder="e.g. Hospitals in Coimbatore" 
+                                        class="w-full bg-slate-950/80 border border-pink-500/30 rounded-2xl px-4 py-3 text-sm text-pink-100 placeholder-pink-300/40 focus:outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 transition-all">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-medium text-pink-200/80 mb-2">Maximum Results Limit</label>
+                                <div class="relative">
+                                    <input type="number" id="max_results" name="max_results" value="10" min="1" max="100" required 
+                                        class="w-full bg-slate-950/80 border border-pink-500/30 rounded-2xl px-4 py-3 text-sm text-pink-100 focus:outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 transition-all">
+                                </div>
+                            </div>
+
+                            <button type="submit" id="startBtn" class="w-full mt-2 py-3.5 px-4 bg-gradient-to-r from-pink-500 via-rose-500 to-fuchsia-600 hover:from-pink-400 hover:to-fuchsia-500 text-white font-semibold text-sm rounded-2xl shadow-lg shadow-pink-500/25 glow-effect transition-all duration-200 flex items-center justify-center space-x-2">
+                                <i data-lucide="play" class="w-4 h-4 fill-current"></i>
+                                <span>Start Intelligence Extraction</span>
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="mt-6 pt-4 border-t border-pink-500/10 flex items-center justify-between text-xs text-pink-300/60">
+                        <span>Status: <strong id="statusBadge" class="text-pink-200 font-medium">Idle</strong></span>
+                        <span>Auto-Normalizer: <strong class="text-pink-400 font-medium">E.164 Enabled</strong></span>
+                    </div>
+                </div>
+
+                <!-- Live Execution Console Card -->
+                <div class="lg:col-span-7 glass-panel rounded-3xl p-6 shadow-2xl flex flex-col h-[360px]">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center space-x-2">
+                            <span class="relative flex h-2.5 w-2.5">
+                                <span id="pulseDot" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75"></span>
+                                <span id="solidDot" class="relative inline-flex rounded-full h-2.5 w-2.5 bg-pink-500"></span>
+                            </span>
+                            <h2 class="text-base font-semibold text-white">Live Execution Console</h2>
+                        </div>
+                        <button id="clearLogs" class="text-xs text-pink-300/60 hover:text-pink-200 transition-colors">Clear Console</button>
+                    </div>
+
+                    <div id="logConsole" class="flex-1 bg-slate-950/90 rounded-2xl p-4 font-mono text-xs text-pink-300 overflow-y-auto space-y-2 border border-pink-500/10 scroll-smooth">
+                        <p class="text-pink-300/40">System ready. Enter query details above to initialize extraction sequence.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scraped Leads Table Card -->
+            <div class="bg-slate-900/60 backdrop-blur-xl rounded-3xl shadow-2xl border border-pink-500/20 overflow-hidden">
+                
+                <!-- Table Controls & Header -->
+                <div class="px-6 py-5 border-b border-pink-500/10 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-pink-950/10">
+                    <div>
+                        <h2 class="text-lg font-bold text-pink-100 flex items-center gap-2">
+                            <span>Scraped Leads Database</span>
+                            <i data-lucide="sparkles" class="w-4 h-4 text-pink-400"></i>
+                        </h2>
+                        <p class="text-xs text-pink-300/60 mt-0.5">Real-time structured business contacts</p>
+                    </div>
+
+                    <!-- Search Bar & Controls -->
+                    <div class="flex items-center space-x-3">
+                        <div class="relative min-w-[260px]">
+                            <i data-lucide="search" class="w-4 h-4 text-pink-300/60 absolute left-3 top-1/2 -translate-y-1/2"></i>
+                            <input type="text" id="tableSearch" placeholder="Search leads by name, email, phone..." 
+                                class="w-full bg-slate-950/70 border border-pink-500/30 rounded-2xl pl-9 pr-4 py-2 text-xs text-pink-100 placeholder-pink-300/40 focus:outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 transition-all">
+                        </div>
+                        <div class="px-3 py-2 rounded-2xl bg-pink-500/10 text-pink-200 text-xs font-semibold border border-pink-500/20 shrink-0">
+                            Total: <span id="totalRecordsCount" class="text-pink-300">{{ leads|length }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-pink-950/20 border-b border-pink-500/10 text-[11px] font-semibold text-pink-300/70 uppercase tracking-wider">
+                                <th class="px-6 py-4">Business Name</th>
+                                <th class="px-6 py-4">Phone Number</th>
+                                <th class="px-6 py-4">Website</th>
+                                <th class="px-6 py-4">Extracted Emails</th>
+                                <th class="px-6 py-4">Address</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leadsTableBody" class="divide-y divide-pink-500/10 text-sm">
+                            {% for lead in leads %}
+                            <tr class="lead-row hover:bg-pink-500/5 transition-colors duration-150 group">
+                                <td class="px-6 py-4 font-medium text-pink-50 group-hover:text-pink-300 transition-colors">
+                                    {{ lead.name }}
+                                </td>
+                                <td class="px-6 py-4 text-slate-300 font-mono text-xs">
+                                    {% if lead.phone != "N/A" %}
+                                        <span class="inline-flex items-center px-2.5 py-1 rounded-lg bg-pink-500/10 text-pink-300 border border-pink-500/20">
+                                            <i data-lucide="phone" class="w-3 h-3 mr-1.5 text-pink-400"></i>
+                                            {{ lead.phone }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-slate-500">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 text-slate-300">
+                                    {% if lead.website != "N/A" %}
+                                        <a href="{{ lead.website }}" target="_blank" class="inline-flex items-center text-purple-300 hover:text-pink-300 hover:underline max-w-[180px] truncate transition-colors">
+                                            <i data-lucide="external-link" class="w-3 h-3 mr-1 shrink-0"></i>
+                                            <span class="truncate">{{ lead.website }}</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="text-slate-500">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 text-slate-300">
+                                    {% if lead.emails != "N/A" %}
+                                        <span class="inline-flex items-center text-fuchsia-300 bg-fuchsia-500/10 px-2.5 py-1 rounded-lg border border-fuchsia-500/20 text-xs">
+                                            <i data-lucide="mail" class="w-3 h-3 mr-1.5 shrink-0 text-fuchsia-400"></i>
+                                            {{ lead.emails }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-slate-500">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 text-pink-100/60 text-xs max-w-xs truncate">
+                                    {{ lead.address }}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr id="emptyRow">
+                                <td colspan="5" class="px-6 py-12 text-center text-pink-300/50">
+                                    <div class="flex flex-col items-center justify-center space-y-2">
+                                        <i data-lucide="inbox" class="w-8 h-8 text-pink-400/40"></i>
+                                        <p class="text-sm">No leads scraped yet. Use the search panel to fetch records.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination Controls -->
+                <div class="px-6 py-4 border-t border-pink-500/10 bg-pink-950/10 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-pink-200/70">
+                    <div>
+                        Showing <span id="pageStart" class="text-pink-200 font-semibold">0</span> to 
+                        <span id="pageEnd" class="text-pink-200 font-semibold">0</span> of 
+                        <span id="filteredTotal" class="text-pink-200 font-semibold">0</span> entries
+                    </div>
+                    
+                    <div class="flex items-center space-x-2">
+                        <button id="prevBtn" class="px-3.5 py-1.5 rounded-xl border border-pink-500/30 bg-pink-950/30 text-pink-200 hover:bg-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+                            Previous
+                        </button>
+                        <span id="pageIndicator" class="px-3 text-pink-200 font-medium">Page 1</span>
+                        <button id="nextBtn" class="px-3.5 py-1.5 rounded-xl border border-pink-500/30 bg-pink-950/30 text-pink-200 hover:bg-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+                            Next
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Combined Scripts -->
+    <script>
+        lucide.createIcons();
+
+        // 1. SSE Live Streaming Logic
+        const form = document.getElementById('scrapeForm');
+        const startBtn = document.getElementById('startBtn');
+        const logConsole = document.getElementById('logConsole');
+        const clearLogsBtn = document.getElementById('clearLogs');
+        const statusBadge = document.getElementById('statusBadge');
+        const pulseDot = document.getElementById('pulseDot');
+        const solidDot = document.getElementById('solidDot');
+
+        clearLogsBtn.addEventListener('click', () => {
+            logConsole.innerHTML = '<p class="text-pink-300/40">Console cleared.</p>';
+        });
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const query = document.getElementById('query').value;
+            const maxResults = document.getElementById('max_results').value;
+
+            // UI State updates
+            startBtn.disabled = true;
+            startBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            statusBadge.innerText = "Scraping Active";
+            statusBadge.className = "text-pink-300 font-medium";
+            pulseDot.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75";
+            solidDot.className = "relative inline-flex rounded-full h-2.5 w-2.5 bg-pink-500";
+
+            logConsole.innerHTML = '<p class="text-pink-400">Initializing SSE stream pipeline...</p>';
+
+            const eventSource = new EventSource(`/stream/?query=${encodeURIComponent(query)}&max_results=${maxResults}`);
+
+            eventSource.onmessage = function(event) {
+                if (event.data === "COMPLETE") {
+                    eventSource.close();
+                    
+                    // Reset State
+                    startBtn.disabled = false;
+                    startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    statusBadge.innerText = "Completed";
+                    statusBadge.className = "text-fuchsia-300 font-medium";
+                    pulseDot.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-400 opacity-75";
+                    solidDot.className = "relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-500";
+
+                    const doneMsg = document.createElement('p');
+                    doneMsg.className = "text-pink-300 font-bold mt-2";
+                    doneMsg.innerText = "✨ Scraping session finished! Reloading page data...";
+                    logConsole.appendChild(doneMsg);
+                    logConsole.scrollTop = logConsole.scrollHeight;
+
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1500);
+
+                    return;
+                }
+
+                const p = document.createElement('p');
+                p.className = "text-pink-100/90";
+                p.innerText = event.data;
+                logConsole.appendChild(p);
+                logConsole.scrollTop = logConsole.scrollHeight;
+            };
+
+            eventSource.onerror = function() {
+                eventSource.close();
+                startBtn.disabled = false;
+                startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                statusBadge.innerText = "Error Occurred";
+                statusBadge.className = "text-rose-400 font-medium";
+
+                const errorMsg = document.createElement('p');
+                errorMsg.className = "text-rose-400 font-semibold";
+                errorMsg.innerText = "⚠️ Connection error occurred during log streaming.";
+                logConsole.appendChild(errorMsg);
+            };
+        });
+
+        // 2. Client-side Search & Pagination Logic
+        document.addEventListener("DOMContentLoaded", function () {
+            const rows = Array.from(document.querySelectorAll(".lead-row"));
+            const searchInput = document.getElementById("tableSearch");
+            const prevBtn = document.getElementById("prevBtn");
+            const nextBtn = document.getElementById("nextBtn");
+            const pageIndicator = document.getElementById("pageIndicator");
+            const pageStart = document.getElementById("pageStart");
+            const pageEnd = document.getElementById("pageEnd");
+            const filteredTotal = document.getElementById("filteredTotal");
+
+            let currentPage = 1;
+            const rowsPerPage = 10;
+            let filteredRows = [...rows];
+
+            function renderTable() {
+                const total = filteredRows.length;
+                const totalPages = Math.ceil(total / rowsPerPage) || 1;
+
+                if (currentPage > totalPages) currentPage = totalPages;
+                if (currentPage < 1) currentPage = 1;
+
+                const startIdx = (currentPage - 1) * rowsPerPage;
+                const endIdx = startIdx + rowsPerPage;
+
+                // Hide all rows
+                rows.forEach(r => r.style.display = "none");
+
+                // Show target page rows
+                filteredRows.slice(startIdx, endIdx).forEach(r => r.style.display = "");
+
+                // Update text indicators
+                pageStart.innerText = total === 0 ? 0 : startIdx + 1;
+                pageEnd.innerText = Math.min(endIdx, total);
+                filteredTotal.innerText = total;
+                pageIndicator.innerText = `Page ${currentPage} of ${totalPages}`;
+
+                // Update navigation button states
+                prevBtn.disabled = currentPage === 1;
+                nextBtn.disabled = currentPage === totalPages || total === 0;
+            }
+
+            // Real-time Search Handler
+            searchInput.addEventListener("input", function (e) {
+                const query = e.target.value.toLowerCase().trim();
+
+                filteredRows = rows.filter(row => {
+                    const text = row.innerText.toLowerCase();
+                    return text.includes(query);
+                });
+
+                currentPage = 1;
+                renderTable();
+            });
+
+            // Pagination Controls
+            prevBtn.addEventListener("click", () => {
+                if (currentPage > 1) {
+                    currentPage--;
+                    renderTable();
+                }
+            });
+
+            nextBtn.addEventListener("click", () => {
+                const totalPages = Math.ceil(filteredRows.length / rowsPerPage);
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    renderTable();
+                }
+            });
+
+            // Initial execution
+            renderTable();
+        });
+    </script>
+</body>
+</html>
