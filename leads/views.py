@@ -18,13 +18,44 @@ def dashboard(request):
     return render(request, "leads/dashboard.html", {"leads": leads})
 
 
+# async def stream_logs(request):
+#     query = request.GET.get("query", "")
+#     max_results = int(request.GET.get("max_results", 5))
+
+#     async_queue = asyncio.Queue()
+
+#     # Worker task executing the scraper
+#     async def worker():
+#         try:
+#             await async_stream_gmaps_scraper(async_queue, query, max_results)
+#         except Exception as e:
+#             await async_queue.put(f"data: ❌ Error: {str(e)}\n\n")
+#         finally:
+#             await async_queue.put("data: COMPLETE\n\n")
+#             await async_queue.put(None)
+
+#     # Fire off worker in the active ASGI event loop
+#     asyncio.create_task(worker())
+
+#     # Native async generator for StreamingHttpResponse
+#     async def event_stream():
+#         while True:
+#             item = await async_queue.get()
+#             if item is None:
+#                 break
+#             yield item
+
+#     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+#     response['Cache-Control'] = 'no-cache'
+#     response['X-Accel-Buffering'] = 'no'
+#     return response
+
 async def stream_logs(request):
     query = request.GET.get("query", "")
     max_results = int(request.GET.get("max_results", 5))
 
     async_queue = asyncio.Queue()
 
-    # Worker task executing the scraper
     async def worker():
         try:
             await async_stream_gmaps_scraper(async_queue, query, max_results)
@@ -34,16 +65,19 @@ async def stream_logs(request):
             await async_queue.put("data: COMPLETE\n\n")
             await async_queue.put(None)
 
-    # Fire off worker in the active ASGI event loop
     asyncio.create_task(worker())
 
-    # Native async generator for StreamingHttpResponse
     async def event_stream():
         while True:
-            item = await async_queue.get()
-            if item is None:
-                break
-            yield item
+            try:
+                # Wait up to 10 seconds for a new log item
+                item = await asyncio.wait_for(async_queue.get(), timeout=10.0)
+                if item is None:
+                    break
+                yield item
+            except asyncio.TimeoutError:
+                # Send SSE comment heartbeat to keep proxy connection active
+                yield ": ping\n\n"
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response['Cache-Control'] = 'no-cache'

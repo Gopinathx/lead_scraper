@@ -170,7 +170,7 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
             raw_phone, website, address, emails = "N/A", "N/A", "N/A", "N/A"
 
             try:
-                await page.goto(href, timeout=30000, wait_until="domcontentloaded")
+                await page.goto(href, timeout=15000, wait_until="domcontentloaded")
                 await asyncio.sleep(2)
 
                 # Name
