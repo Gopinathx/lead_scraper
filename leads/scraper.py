@@ -38,7 +38,7 @@ def normalize_phone_number(phone_str: str, default_country_code: str = "91") -> 
 
 # --- Email Extraction Utility ---
 
-def extract_emails(url: str) -> str:
+async def extract_emails_async(url: str) -> str:
     if not url or url == "N/A" or not url.startswith("http"):
         return "N/A"
 
@@ -54,21 +54,22 @@ def extract_emails(url: str) -> str:
     except Exception:
         return "N/A"
 
-    for path in subpaths:
-        try:
-            target = urljoin(base, path)
-            resp = requests.get(target, headers=headers, timeout=4)
-            if resp.status_code == 200:
-                matches = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", resp.text)
-                clean = [
-                    e.lower() for e in matches 
-                    if not any(e.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".css", ".js", ".svg", ".webp", ".gif"])
-                ]
-                found_emails.update(clean)
-                if found_emails:
-                    break
-        except Exception:
-            continue
+    async with httpx.AsyncClient(headers=headers, timeout=5.0, follow_redirects=True) as client:
+        for path in subpaths:
+            try:
+                target = urljoin(base, path)
+                resp = await client.get(target)
+                if resp.status_code == 200:
+                    matches = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", resp.text)
+                    clean = [
+                        e.lower() for e in matches 
+                        if not any(e.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".css", ".js", ".svg", ".webp", ".gif"])
+                    ]
+                    found_emails.update(clean)
+                    if found_emails:
+                        break
+            except Exception:
+                continue
 
     return ", ".join(sorted(list(found_emails))[:3]) if found_emails else "N/A"
 
@@ -205,7 +206,7 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
 
                 # Emails extraction
                 if website != "N/A":
-                    emails = await asyncio.to_thread(extract_emails, website)
+                    emails = await extract_emails_async(website)
 
                 # Save Lead with normalized phone
                 lead = await save_lead_to_db(
