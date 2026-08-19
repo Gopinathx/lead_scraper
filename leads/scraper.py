@@ -47,7 +47,8 @@ async def extract_emails_async(url: str) -> str:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     found_emails = set()
-    subpaths = ["", "/contact", "/about", "/contact-us"]
+    # Limit paths to main and contact only for fast scraping
+    subpaths = ["", "/contact", "/about"]
 
     try:
         parsed = urlparse(url)
@@ -55,7 +56,8 @@ async def extract_emails_async(url: str) -> str:
     except Exception:
         return "N/A"
 
-    async with httpx.AsyncClient(headers=headers, timeout=5.0, follow_redirects=True) as client:
+    # Strict 2 second timeout per subpath request
+    async with httpx.AsyncClient(headers=headers, timeout=2.0, follow_redirects=True, verify=False) as client:
         for path in subpaths:
             try:
                 target = urljoin(base, path)
@@ -73,6 +75,41 @@ async def extract_emails_async(url: str) -> str:
                 continue
 
     return ", ".join(sorted(list(found_emails))[:3]) if found_emails else "N/A"
+
+# async def extract_emails_async(url: str) -> str:
+#     if not url or url == "N/A" or not url.startswith("http"):
+#         return "N/A"
+
+#     headers = {
+#         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+#     }
+#     found_emails = set()
+#     subpaths = ["", "/contact", "/about", "/contact-us"]
+
+#     try:
+#         parsed = urlparse(url)
+#         base = f"{parsed.scheme}://{parsed.netloc}"
+#     except Exception:
+#         return "N/A"
+
+#     async with httpx.AsyncClient(headers=headers, timeout=5.0, follow_redirects=True) as client:
+#         for path in subpaths:
+#             try:
+#                 target = urljoin(base, path)
+#                 resp = await client.get(target)
+#                 if resp.status_code == 200:
+#                     matches = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", resp.text)
+#                     clean = [
+#                         e.lower() for e in matches 
+#                         if not any(e.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".css", ".js", ".svg", ".webp", ".gif"])
+#                     ]
+#                     found_emails.update(clean)
+#                     if found_emails:
+#                         break
+#             except Exception:
+#                 continue
+
+#     return ", ".join(sorted(list(found_emails))[:3]) if found_emails else "N/A"
 
 
 # --- Async Helpers for Django ORM ---
@@ -224,8 +261,9 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
                     aria_label = await addr_el.get_attribute('aria-label') or ""
                     address = aria_label.replace("Address: ", "").replace("Address", "").strip()
 
-                # Emails extraction
+                # Emails extraction with log update to keep proxy alive
                 if website != "N/A":
+                    await q_out.put(f"data: 📧 Checking email for {name}...\n\n")
                     emails = await extract_emails_async(website)
 
                 # Save Lead with normalized phone
@@ -239,8 +277,9 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
 
                 count += 1
                 await q_out.put(f"data: ✅ Saved ({count}/{len(target_links)}): {lead.name}\n\n")
-
-                await asyncio.sleep(0.05)
+                
+                # Yield execution to event loop
+                await asyncio.sleep(0.1)
 
             except Exception as err:
                 await q_out.put(f"data: ⚠️ Error processing entry: {str(err)}\n\n")
