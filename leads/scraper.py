@@ -111,13 +111,18 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-gpu"
+                "--disable-gpu",
+                "--disable-software-rasterizer"
             ]
         )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             locale="en-US"
         )
+        
+        # --- NEW: Block images, stylesheets, and fonts to save RAM ---
+        await context.route("**/*.{png,jpg,jpeg,svg,gif,webp,css,woff,woff2,ico}", lambda route: route.abort())
+
         page = await context.new_page()
 
         target_url = f"https://www.google.com/maps/search/{search_query.replace(' ', '+')}"

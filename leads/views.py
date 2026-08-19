@@ -60,7 +60,11 @@ async def stream_logs(request):
         try:
             await async_stream_gmaps_scraper(async_queue, query, max_results)
         except Exception as e:
-            await async_queue.put(f"data: ❌ Worker Error: {str(e)}\n\n")
+            import traceback
+            err_msg = f"data: ❌ Critical Worker Error: {str(e)}\n\n"
+            print(err_msg)
+            traceback.print_exc()
+            await async_queue.put(err_msg)
         finally:
             await async_queue.put("data: COMPLETE\n\n")
             await async_queue.put(None)
@@ -70,12 +74,11 @@ async def stream_logs(request):
     async def event_stream():
         while True:
             try:
-                item = await asyncio.wait_for(async_queue.get(), timeout=5.0)
+                item = await asyncio.wait_for(async_queue.get(), timeout=15.0)
                 if item is None:
                     break
                 yield item
             except asyncio.TimeoutError:
-                # Keep connection alive during long Playwright page loads
                 yield ": ping\n\n"
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
