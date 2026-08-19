@@ -52,33 +52,33 @@ def dashboard(request):
 
 async def stream_logs(request):
     query = request.GET.get("query", "")
-    max_results = int(request.GET.get("max_results", 5))
+    max_results = int(request.GET.get("max_results", 10))
 
     async_queue = asyncio.Queue()
 
+    # Background worker running the scraper
     async def worker():
         try:
             await async_stream_gmaps_scraper(async_queue, query, max_results)
         except Exception as e:
-            import traceback
-            err_msg = f"data: ❌ Critical Worker Error: {str(e)}\n\n"
-            print(err_msg)
-            traceback.print_exc()
-            await async_queue.put(err_msg)
+            await async_queue.put(f"data: ❌ Worker Error: {str(e)}\n\n")
         finally:
             await async_queue.put("data: COMPLETE\n\n")
             await async_queue.put(None)
 
     asyncio.create_task(worker())
 
+    # Stream generator with active heartbeat
     async def event_stream():
         while True:
             try:
-                item = await asyncio.wait_for(async_queue.get(), timeout=15.0)
+                # Wait maximum 3 seconds for scraper logs
+                item = await asyncio.wait_for(async_queue.get(), timeout=3.0)
                 if item is None:
                     break
                 yield item
             except asyncio.TimeoutError:
+                # Keeps Render proxy alive during heavy Playwright execution
                 yield ": ping\n\n"
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")

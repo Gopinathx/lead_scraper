@@ -1,6 +1,5 @@
 import re
 import asyncio
-import requests
 from urllib.parse import urljoin, urlparse
 from playwright.async_api import async_playwright
 from asgiref.sync import sync_to_async
@@ -47,8 +46,8 @@ async def extract_emails_async(url: str) -> str:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     found_emails = set()
-    # Limit paths to main and contact only for fast scraping
-    subpaths = ["", "/contact", "/about"]
+    # Query root and primary contact endpoint for fast resolution
+    subpaths = ["", "/contact"]
 
     try:
         parsed = urlparse(url)
@@ -56,8 +55,8 @@ async def extract_emails_async(url: str) -> str:
     except Exception:
         return "N/A"
 
-    # Strict 2 second timeout per subpath request
-    async with httpx.AsyncClient(headers=headers, timeout=2.0, follow_redirects=True, verify=False) as client:
+    # Fast 1.5s timeout per request to avoid blocking the SSE stream
+    async with httpx.AsyncClient(headers=headers, timeout=1.5, follow_redirects=True, verify=False) as client:
         for path in subpaths:
             try:
                 target = urljoin(base, path)
@@ -75,41 +74,6 @@ async def extract_emails_async(url: str) -> str:
                 continue
 
     return ", ".join(sorted(list(found_emails))[:3]) if found_emails else "N/A"
-
-# async def extract_emails_async(url: str) -> str:
-#     if not url or url == "N/A" or not url.startswith("http"):
-#         return "N/A"
-
-#     headers = {
-#         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-#     }
-#     found_emails = set()
-#     subpaths = ["", "/contact", "/about", "/contact-us"]
-
-#     try:
-#         parsed = urlparse(url)
-#         base = f"{parsed.scheme}://{parsed.netloc}"
-#     except Exception:
-#         return "N/A"
-
-#     async with httpx.AsyncClient(headers=headers, timeout=5.0, follow_redirects=True) as client:
-#         for path in subpaths:
-#             try:
-#                 target = urljoin(base, path)
-#                 resp = await client.get(target)
-#                 if resp.status_code == 200:
-#                     matches = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", resp.text)
-#                     clean = [
-#                         e.lower() for e in matches 
-#                         if not any(e.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".css", ".js", ".svg", ".webp", ".gif"])
-#                     ]
-#                     found_emails.update(clean)
-#                     if found_emails:
-#                         break
-#             except Exception:
-#                 continue
-
-#     return ", ".join(sorted(list(found_emails))[:3]) if found_emails else "N/A"
 
 
 # --- Async Helpers for Django ORM ---
@@ -142,13 +106,12 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
     await q_out.put("data: 🚀 Launching browser scraper...\n\n")
 
     async def route_interceptor(route):
-        # Block heavy media files only, keep CSS/JS for Google Maps rendering
+        # Block heavy media and font files to conserve RAM on Render
         if route.request.resource_type in ["image", "media", "font"]:
             await route.abort()
         else:
             await route.continue_()
 
-    # Inside async_stream_gmaps_scraper:
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -165,7 +128,7 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
             locale="en-US"
         )
 
-        # Attach precise route interceptor
+        # Intercept route to filter media assets
         await context.route("**/*", route_interceptor)
 
         page = await context.new_page()
@@ -173,15 +136,15 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
         target_url = f"https://www.google.com/maps/search/{search_query.replace(' ', '+')}"
         
         try:
-            await page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
+            await page.goto(target_url, timeout=20000, wait_until="domcontentloaded")
         except Exception as e:
             await q_out.put(f"data: ⚠️ Page load warning: {str(e)}\n\n")
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(1.5)
 
         feed_selector = 'div[role="feed"]'
         try:
-            await page.wait_for_selector(feed_selector, timeout=10000)
+            await page.wait_for_selector(feed_selector, timeout=8000)
         except Exception:
             pass
 
@@ -206,7 +169,7 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
             else:
                 await page.mouse.wheel(0, 1000)
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.0)
 
         target_links = list(collected)[:max_results]
 
@@ -222,12 +185,12 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
             raw_phone, website, address, emails = "N/A", "N/A", "N/A", "N/A"
 
             try:
-                # Use commit strategy so page navigation doesn't block on pending network calls
-                await page.goto(href, timeout=20000, wait_until="commit")
+                # Use commit strategy so page navigation proceed immediately
+                await page.goto(href, timeout=12000, wait_until="commit")
                 
-                # Wait specifically for the primary title heading to appear
+                # Wait for title heading
                 try:
-                    await page.wait_for_selector('h1', timeout=5000)
+                    await page.wait_for_selector('h1', timeout=3000)
                 except Exception:
                     pass
 
@@ -237,7 +200,7 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
 
                 await q_out.put(f"data: 📍 Processing ({count + 1}/{len(target_links)}): {name}\n\n")
 
-                # Phone extraction
+                # Extract Phone
                 phone_el = await page.query_selector('button[data-tooltip*="phone"], button[aria-label*="Phone"], button[data-item-id*="phone"]')
                 if phone_el:
                     aria_label = await phone_el.get_attribute('aria-label') or ""
@@ -248,25 +211,25 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
                 # Normalize Phone Number
                 normalized_phone = normalize_phone_number(raw_phone, default_country_code="91")
 
-                # Website extraction
+                # Extract Website
                 website_el = await page.query_selector('a[data-item-id="authority"], a[data-tooltip*="website"], a[aria-label*="Website"]')
                 if website_el:
                     raw_website = await website_el.get_attribute('href')
                     if raw_website and raw_website.startswith('http'):
                         website = raw_website
 
-                # Address extraction
+                # Extract Address
                 addr_el = await page.query_selector('button[data-item-id="address"], button[data-tooltip*="address"], button[aria-label*="Address"]')
                 if addr_el:
                     aria_label = await addr_el.get_attribute('aria-label') or ""
                     address = aria_label.replace("Address: ", "").replace("Address", "").strip()
 
-                # Emails extraction with log update to keep proxy alive
+                # Extract Email with heartbeats before and after async call
                 if website != "N/A":
-                    await q_out.put(f"data: 📧 Checking email for {name}...\n\n")
+                    await q_out.put(f"data: 📧 Checking emails for {name}...\n\n")
                     emails = await extract_emails_async(website)
 
-                # Save Lead with normalized phone
+                # Save Lead to DB
                 lead = await save_lead_to_db(
                     name=name,
                     phone=normalized_phone,
@@ -278,77 +241,15 @@ async def async_stream_gmaps_scraper(q_out, search_query, max_results=5):
                 count += 1
                 await q_out.put(f"data: ✅ Saved ({count}/{len(target_links)}): {lead.name}\n\n")
                 
-                # Yield execution to event loop
-                await asyncio.sleep(0.1)
+                # Yield execution frame to flush SSE stream buffer
+                await asyncio.sleep(0.05)
 
             except Exception as err:
                 await q_out.put(f"data: ⚠️ Error processing entry: {str(err)}\n\n")
                 continue
-        # for href in target_links:
-        #     raw_phone, website, address, emails = "N/A", "N/A", "N/A", "N/A"
-
-        #     try:
-        #         await page.goto(href, timeout=15000, wait_until="domcontentloaded")
-        #         await asyncio.sleep(2)
-
-        #         # Name
-        #         title_el = await page.query_selector('h1')
-        #         name = (await title_el.inner_text()).strip() if title_el else "Unknown Location"
-
-        #         await q_out.put(f"data: 📍 Processing ({count + 1}/{len(target_links)}): {name}\n\n")
-
-        #         # Phone extraction
-        #         phone_el = await page.query_selector('button[data-tooltip*="phone"], button[aria-label*="Phone"], button[data-item-id*="phone"]')
-        #         if phone_el:
-        #             aria_label = await phone_el.get_attribute('aria-label') or ""
-        #             raw_phone = aria_label.replace("Phone: ", "").replace("Phone", "").strip()
-        #             if not raw_phone:
-        #                 raw_phone = (await phone_el.inner_text()).strip()
-
-        #         # Normalize Phone Number
-        #         normalized_phone = normalize_phone_number(raw_phone, default_country_code="91")
-
-        #         # Website extraction
-        #         website_el = await page.query_selector('a[data-item-id="authority"], a[data-tooltip*="website"], a[aria-label*="Website"]')
-        #         if website_el:
-        #             raw_website = await website_el.get_attribute('href')
-        #             if raw_website and raw_website.startswith('http'):
-        #                 website = raw_website
-
-        #         # Address extraction
-        #         addr_el = await page.query_selector('button[data-item-id="address"], button[data-tooltip*="address"], button[aria-label*="Address"]')
-        #         if addr_el:
-        #             aria_label = await addr_el.get_attribute('aria-label') or ""
-        #             address = aria_label.replace("Address: ", "").replace("Address", "").strip()
-
-        #         # Emails extraction
-        #         if website != "N/A":
-        #             emails = await extract_emails_async(website)
-
-        #         # Save Lead with normalized phone
-        #         lead = await save_lead_to_db(
-        #             name=name,
-        #             phone=normalized_phone,
-        #             website=website,
-        #             emails=emails,
-        #             address=address
-        #         )
-                
-        #         count += 1
-        #         await q_out.put(f"data: ✅ Saved ({count}/{len(target_links)}): {lead.name}\n\n")
-
-        #         await asyncio.sleep(0.05)
-
-        #     except Exception as err:
-        #         await q_out.put(f"data: ⚠️ Error processing entry: {str(err)}\n\n")
-        #         continue
-
-
 
         await browser.close()
         await q_out.put("data: 🎉 Scraping Complete!\n\n")
-
-
 # import re
 # import asyncio
 # import requests
